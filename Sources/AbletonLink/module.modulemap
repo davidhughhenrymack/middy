@@ -1,0 +1,4 @@
+module AbletonLink [system] {
+    header "shim.h"
+    export *
+}

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+link_source="$PWD/.build/ableton-link"
+link_build="$PWD/.build/link-build"
+link_revision="5ba907ae027a8c2ec8824463e37296dcefc5e9be"
+mkdir -p .build
+if [[ ! -d "$link_source/.git" ]]; then
+    git clone --branch Link-4.1.1 --depth 1 https://github.com/Ableton/link.git "$link_source"
+fi
+if [[ "$(git -C "$link_source" rev-parse HEAD)" != "$link_revision" ]]; then
+    echo "Expected Ableton Link 4.1.1 at $link_source." >&2
+    exit 1
+fi
+git -C "$link_source" submodule update --init --recursive --depth 1
+
+cmake -S Support -B "$link_build" -DABLETON_LINK_SOURCE="$link_source" \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
+cmake --build "$link_build" --target abl_link --parallel
+
+configuration="${MIDDY_CONFIGURATION:-release}"
+swift build -c "$configuration"
+bin_path="$(swift build -c "$configuration" --show-bin-path)"
+
+bundle="$PWD/.build/Middy.app"
+mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
+cp Support/Info.plist "$bundle/Contents/"
+cp "$bin_path/Middy" "$bundle/Contents/MacOS/"
+cp "$link_source/LICENSE.md" "$bundle/Contents/Resources/Ableton-Link-LICENSE.md"
+cp "$link_source/GNU-GPL-v2.0.md" "$bundle/Contents/Resources/GNU-GPL-v2.0.md"
+icon="$PWD/.build/Middy.icns"
+if [[ ! -f "$icon" || Support/MakeIcon.swift -nt "$icon" ]]; then
+    swiftc -O -parse-as-library Support/MakeIcon.swift -o .build/make-middy-icon
+    .build/make-middy-icon .build/Middy.iconset
+    iconutil -c icns .build/Middy.iconset -o "$icon"
+fi
+cp "$icon" "$bundle/Contents/Resources/"
+codesign --force --sign - "$bundle"
+echo "$bundle"
