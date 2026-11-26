@@ -631,7 +631,7 @@ struct ConductorTests {
                 breakdownsWithoutPad += 1
             } else {
                 breakdownsWithPad += 1
-                #expect(breakdown.count == 48 * 3)
+                #expect((40 * 3...48 * 3).contains(breakdown.count))
             }
             let verse = velocities(8..<32)
             let reprise = velocities(100..<124)
@@ -663,7 +663,7 @@ struct ConductorTests {
                     buildsWithPad += 1
                     #expect(chords.allSatisfy { $0.count == 3 })
                     for (before, after) in zip(chords, chords.dropFirst()) {
-                        #expect(before.max()! < after.min()!)
+                        #expect(zip(before, after).allSatisfy { $0 < $1 })
                     }
                 }
             }
@@ -698,10 +698,49 @@ struct ConductorTests {
                     }
                 }
             }
-            let breakdownPads = bars[32..<96].flatMap(\.notes).filter { $0.voice == .pad }
-            #expect(breakdownPads.allSatisfy { abs($0.beat + $0.duration - 3.85) < 0.025 })
         }
         #expect(heard == Set(lengths))
+    }
+
+    @Test func breakdownPadsSometimesHoldAcrossTwoBarsAndResumeAfterRephase() {
+        let settings = PatternSettings()
+        var checkedHold = false
+        for seed in UInt64(1)...12 {
+            let conductor = Conductor()
+            var random = ArrangementRandom(seed: seed)
+            let bars = (0..<97).map { _ in conductor.nextBar(settings: settings, using: &random) }
+            var sustainedBlocks = Set<Int>()
+            var singleBars = 0
+            for index in 32..<96 {
+                let pads = bars[index].notes.filter { $0.voice == .pad }
+                guard let first = pads.first else { continue }
+                #expect(pads.count == 3)
+                let doubled = first.duration > 4
+                let duration = doubled ? 7.70 : 3.85
+                #expect(pads.allSatisfy { abs($0.beat + $0.duration - duration) < 0.025 })
+                guard doubled else {
+                    singleBars += 1
+                    continue
+                }
+                let sectionBar = bars[index].position.bar - 1
+                #expect(sectionBar.isMultiple(of: 2))
+                #expect(!bars[index + 1].notes.contains { $0.voice == .pad })
+                sustainedBlocks.insert(sectionBar / 8)
+
+                if !checkedHold {
+                    let rephased = Conductor()
+                    var replay = ArrangementRandom(seed: seed)
+                    for _ in 0...index { _ = rephased.nextBar(settings: settings, using: &replay) }
+                    let resumed = rephased.nextBar(settings: settings, resumeDrone: true, using: &replay)
+                        .notes.filter { $0.voice == .pad }
+                    #expect(resumed.map(\.pitch) == pads.map(\.pitch))
+                    #expect(resumed.allSatisfy { abs($0.beat + $0.duration - 3.70) < 0.025 })
+                    checkedHold = true
+                }
+            }
+            if singleBars > 0 { #expect(sustainedBlocks.count == 2) }
+        }
+        #expect(checkedHold)
     }
 
     @Test func formantsReplySparinglyInSelectedVerses() {

@@ -43,7 +43,7 @@ final class Sequencer: @unchecked Sendable {
     private var seed: UInt64
     private var pendingSeed: UInt64?
     private var nextBar: Double?
-    private var resumeDrone = false
+    private var resumeSustainedNotes = false
     private var events: [Event] = []
     private var eventIndex = 0
     private var sounding: [Voice: Set<UInt8>] = [:]
@@ -129,7 +129,7 @@ final class Sequencer: @unchecked Sendable {
             let elapsed = Double(now - lastTick.time) / 1_000_000
             // A session re-alignment or a machine wake can jump over scheduled events.
             if elapsed > 0.25 || abs(beat - lastTick.beat - elapsed * tempo / 60) > 0.12 {
-                resumeDrone = resumeDrone || status.playback == .playing
+                resumeSustainedNotes = resumeSustainedNotes || status.playback == .playing
                 cueNextBar(at: beat)
                 update(.status(status))
             }
@@ -171,11 +171,11 @@ final class Sequencer: @unchecked Sendable {
                 settings.root = key.relatedMinor(using: &random)
             }
             conductor = Conductor()
-            resumeDrone = false
+            resumeSustainedNotes = false
             update(.reseeded)
         }
-        let bar = conductor.nextBar(settings: settings, resumeDrone: resumeDrone, using: &random)
-        resumeDrone = false
+        let bar = conductor.nextBar(settings: settings, resumeDrone: resumeSustainedNotes, using: &random)
+        resumeSustainedNotes = false
         status.arrangement = bar.position
         update(.status(status))
         let barEvents = bar.notes.flatMap { note in

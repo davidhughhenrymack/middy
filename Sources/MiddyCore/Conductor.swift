@@ -36,6 +36,7 @@ public final class Conductor {
     private static let verseBars = 24
     private static let padDuration = 3.85
     private static let breakdownPhrases: [PhraseName] = [.c, .d, .c, .e, .d, .e, .c, .e]
+    private static let breakdownPadBlocks = [0, 1, 3, 4, 6, 7]
 
     private struct Phrase {
         let motif: [Int]
@@ -119,6 +120,8 @@ public final class Conductor {
     private var versePads: VersePads = .both
     private var versePadLengths: [Double] = []
     private var breakdownPad = true
+    private var sustainedBreakdownBlocks: Set<Int> = []
+    private var heldPadVelocity: UInt8?
     private var repriseDrone = false
     private var formantCue: (isReprise: Bool, bars: [Int])?
     private var sectionIndex = 0
@@ -132,6 +135,7 @@ public final class Conductor {
     public func reset<R: RandomNumberGenerator>(root: Root = .c, using random: inout R) {
         key = root
         drone = nil
+        heldPadVelocity = nil
         makePhrases(using: &random)
         song += 1
         sectionIndex = 0
@@ -139,7 +143,7 @@ public final class Conductor {
     }
 
     public func nextBar<R: RandomNumberGenerator>(
-        settings: PatternSettings, resumeDrone: Bool = false, using random: inout R
+        settings: PatternSettings, resumeDrone resumeSustainedNotes: Bool = false, using random: inout R
     ) -> ArrangedBar {
         if phrases.isEmpty { reset(root: settings.root, using: &random) }
         let plan = Self.sections[sectionIndex]
@@ -168,14 +172,10 @@ public final class Conductor {
                     }
                 }
             }
-            if settings.padEnabled, let velocity = padVelocity(for: plan, phraseBar: phraseBar) {
-                let duration = plan.section == .verse
-                    ? versePadLengths[barIndex / Self.phraseLength] : Self.padDuration
-                notes += chord(at: phrase.chords[barIndex % phrase.chords.count], voicing: phrase.padVoicing,
-                               beat: 0, duration: duration, velocity: velocity, settings: settings)
-            }
+            notes += padNotes(for: plan, phrase: phrase, phraseBar: phraseBar,
+                              settings: settings, resume: resumeSustainedNotes)
         }
-        notes += droneNotes(for: plan, resume: resumeDrone)
+        notes += droneNotes(for: plan, resume: resumeSustainedNotes)
         let build = plan.isReprise ? returnBuild : openingBuild
         if plan.section == .build {
             notes = BuildTension.apply(to: notes, bar: barIndex, intensity: build.intensity)
@@ -251,6 +251,7 @@ public final class Conductor {
         versePadLengths = (0..<(Self.verseBars / Self.phraseLength)).map { _ in
             Self.padDuration * padLengthOptions.randomElement(using: &random)!
         }
+        sustainedBreakdownBlocks = Set(Self.breakdownPadBlocks.shuffled(using: &random).prefix(2))
     }
 
     private func makePhrase<R: RandomNumberGenerator>(
@@ -312,11 +313,39 @@ public final class Conductor {
         case .breakdown:
             guard breakdownPad else { return nil }
             let block = barIndex / Section.textureBars
-            guard block != 2 && block != 5 else { return nil }
+            guard Self.breakdownPadBlocks.contains(block) else { return nil }
             return [44, 39, 42, 49][phraseBar] + (block == 0 ? 0 : 5)
         default:
             return nil
         }
+    }
+
+    private func padNotes(
+        for plan: SectionPlan, phrase: Phrase, phraseBar: Int, settings: PatternSettings, resume: Bool
+    ) -> [Note] {
+        let heldVelocity = heldPadVelocity
+        heldPadVelocity = nil
+        guard settings.padEnabled, let velocity = padVelocity(for: plan, phraseBar: phraseBar) else { return [] }
+        let index = barIndex % phrase.chords.count
+        let degree = phrase.chords[index]
+        if let heldVelocity {
+            guard resume else { return [] }
+            return chord(at: degree, voicing: phrase.padVoicing, beat: 0,
+                         duration: 2 * Self.padDuration - AcidPattern.beatsPerBar,
+                         velocity: heldVelocity, settings: settings)
+        }
+
+        var duration = Self.padDuration
+        if plan.section == .verse {
+            duration = versePadLengths[barIndex / Self.phraseLength]
+        } else if plan.section == .breakdown, sustainedBreakdownBlocks.contains(barIndex / Section.textureBars),
+                  index.isMultiple(of: 2), phrase.chords.indices.contains(index + 1),
+                  phrase.chords[index + 1] == degree {
+            heldPadVelocity = velocity
+            duration *= 2
+        }
+        return chord(at: degree, voicing: phrase.padVoicing, beat: 0,
+                     duration: duration, velocity: velocity, settings: settings)
     }
 
     private func formantReply(for plan: SectionPlan, following performed: [Note]) -> [Note] {

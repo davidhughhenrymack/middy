@@ -38,7 +38,9 @@ struct BarStress {
             let velocity = Int(note.velocity) + accent + Int.random(in: variation, using: &random)
             let beat = note.beat + delay
             let gate = note.duration + Double.random(in: -0.008...0.008, using: &random)
-            let duration = note.voice == .drone ? gate : min(AcidPattern.beatsPerBar - beat - 0.002, gate)
+            let sustainsAcrossBars = note.voice == .drone
+                || (note.voice == .pad && note.duration > AcidPattern.beatsPerBar)
+            let duration = sustainsAcrossBars ? gate : min(AcidPattern.beatsPerBar - beat - 0.002, gate)
             return Note(voice: note.voice, pitch: note.pitch, velocity: UInt8(max(1, min(127, velocity))),
                         beat: beat, duration: duration)
         }
